@@ -23,6 +23,8 @@ final class RecordingPlayer: ObservableObject {
 
     private var player: AVPlayer?
     private var timeObserver: Any?
+    private var statusObserver: AnyCancellable?
+    private var status: AVPlayerItem.Status?
 
     init() {
         try? audioSession.setCategory(.playback)
@@ -38,19 +40,28 @@ final class RecordingPlayer: ObservableObject {
     }
 
     func pause() {
-        player?.pause()
+        if status == .failed {
+            return
+        }
         playing = false
+        if status == .readyToPlay {
+            player?.pause()
+        }
     }
 
     func togglePlay(_ recording: Recording) {
+        if playing {
+            pause()
+            return
+        }
         if self.recording?.url != recording.url {
             self.recording = recording
             if let url = recording.url {
                 setupPlayer(for: url, trackDuration: recording.duration)
             }
         }
-        if playing { pause() }
-        else { play() }
+        
+        play()
     }
 
     func seek(to progress: Double) {
@@ -68,9 +79,16 @@ final class RecordingPlayer: ObservableObject {
     }
 
     private func play() {
-        try? audioSession.setActive(true)
-        player?.play()
+        if status == .failed {
+            return
+        }
+        //The play button should show playing even if the audio is not ready yet
         playing = true
+        if status == .readyToPlay {
+            //Audio cannot be played until it is ready
+            try? audioSession.setActive(true)
+            player?.play()
+        }
     }
 
     private func setupPlayer(for url: URL, trackDuration: Double) {
@@ -83,6 +101,23 @@ final class RecordingPlayer: ObservableObject {
 
         let playerItem = AVPlayerItem(url: url)
         player = AVPlayer(playerItem: playerItem)
+        
+        statusObserver = playerItem.publisher(for: \.status)
+            .sink { [weak self] status in
+                
+                self?.status = status
+                
+                print("========status:\(status)")
+                self?.play()
+                
+//                guard let isPlaying = self?.playing else {
+//                    return
+//                }
+//                
+//                if isPlaying && status == .readyToPlay {
+//                    self?.play()
+//                }
+            }
 
         NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
@@ -105,4 +140,8 @@ final class RecordingPlayer: ObservableObject {
         }
     }
 
+    deinit {
+        statusObserver?.cancel()
+    }
+    
 }
